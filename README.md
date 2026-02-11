@@ -1,63 +1,88 @@
 # UFC Fight Predictor
 
+End-to-end UFC prediction system:
+- Scrapes UFCStats into canonical Postgres tables (schema `ufc`)
+- Materializes stable contract tables for ML (schema `contract`)
+- Scrapes upcoming events/cards (schema `app`)
+- Trains a pre-fight model from Postgres (`UFC_prefight_pro.py`)
+- Stores predictions for upcoming fights in Postgres (`app.predictions`)
 
-<img width="566" height="259" alt="image" src="https://github.com/user-attachments/assets/e5c2a582-72f7-49f3-be14-0659dc84ee5e" />
+## Quickstart (Postgres)
 
-
-In my and many others' opinion, MMA is the most unpredictable sport. With unexpected knockouts and so many intangibles like knockout power, it becomes very difficult to accurately predict a winner. My goal was to train a machine learning model as in-depth as possible to predict future fight outcomes. 
-
-End-to-end pipeline for predicting UFC fight outcomes using fighter statistics, recent form, and physical attributes.**
-
-This project is a complete UFC fight prediction system built entirely from scratch. It processes historical fight data, fighter statistics, and event information to create an end-to-end machine learning pipeline that predicts the probability of a fighter winning.
-
-### Features
-
-- **Data Cleaning & Merging:** Combines multiple CSV datasets (`fighters.csv`, `fighters_stats.csv`, `fights.csv`, `events.csv`) to create a comprehensive dataset with fighter physicals, career stats, and recent form.
-- **Feature Engineering:** Generates core features including:
-  - Career win rates
-  - Differences in strikes, takedowns, knockdowns, submissions
-  - Significant strike percentages
-  - Physical differences (height, weight, reach)
-  - Recent-form statistics with decay weighting
-- **Categorical Encoding:** Handles fighter stance, fighting style, and weight class using one-hot encoding.
-- **Train/Test Split:** Splits fights chronologically to prevent data leakage.
-- **Machine Learning Model:** 
-  - XGBoost classifier
-  - Calibrated probabilities using isotonic regression
-- **Evaluation:** Accuracy, ROC AUC, log loss, classification report, confusion matrix, and feature importance.
-- **Interactive CLI:** 
-  - Autocomplete for fighter names
-  - Fuzzy matching using `rapidfuzz`
-  - Predict probability of a fighter winning
-
-### Results
-
-- **Accuracy:** 78.91%  
-- **ROC AUC:** 0.8675  
-- **Log Loss:** 0.4547  
-
-Top features contributing to predictions include: `SigStr_diff`, `STR_diff`, `recent_winrate_diff`, and various fighting style and weight class indicators.
-
-### How to Run
-
-Install dependencies:
+1. Install dependencies:
 
 ```bash
-pip install pandas numpy scikit-learn xgboost rapidfuzz prompt_toolkit joblib
+pip install -r requirements.txt
+```
 
+2. Set `DATABASE_URL` in `.env` (Supabase recommended).
 
+3. Initialize schemas/tables:
 
+```powershell
+$env:PYTHONPATH = "src"
+python -m ufc_ingest.cli validate-contract
+```
 
-Technologies & Libraries
+4. Backfill (incremental in batches):
 
-Python 3
+```powershell
+$env:PYTHONPATH = "src"
+python scripts/backfill_all.py
+```
 
-Data Handling: pandas, numpy
+5. Run the weekly pipeline (incremental ingest + refresh contract + refresh upcoming fights + train + store predictions):
 
-Machine Learning: scikit-learn, xgboost
+```powershell
+python scripts/weekly_pipeline.py
+```
 
-Fuzzy Matching: rapidfuzz
+## API (FastAPI)
 
-Interactive CLI: prompt_toolkit
+Start the API locally:
 
-Model Persistence: joblib
+```powershell
+$env:PYTHONPATH = "src"
+python -m uvicorn ufc_api.main:app --host 0.0.0.0 --port 8000
+```
+
+Endpoints:
+- `GET /health`
+- `GET /models/latest`
+- `GET /upcoming`
+- `GET /upcoming/predictions`
+- `POST /predict`
+- `GET /fighters/search`
+- `GET /completed/predictions`
+
+## Deploy API (Google Cloud Run)
+
+Preferred free/low-cost production path:
+- Build image from this repo (`Dockerfile`)
+- Push to Artifact Registry
+- Deploy to Cloud Run with `min-instances=0`
+
+Detailed guide:
+- `deploy/gcp_cloud_run.md`
+
+GitHub Actions deploy workflow:
+- `.github/workflows/deploy_gcp_cloud_run.yml`
+
+Required GitHub secrets:
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_SERVICE_ACCOUNT`
+- `DATABASE_URL`
+- `CORS_ORIGINS` (optional)
+
+Required GitHub variables:
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `ARTIFACT_REPO`
+- `CLOUD_RUN_SERVICE`
+
+## Notes
+
+- Canonical tables live under `ufc.*`.
+- Contract tables live under `contract.*` and match the legacy CSV schema exactly.
+- Website-facing state lives under `app.*` (`upcoming_fights`, `predictions`, `model_artifacts`).
+- UFCStats requests must use `http://ufcstats.com` (no https/www).
