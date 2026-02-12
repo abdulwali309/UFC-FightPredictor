@@ -1,128 +1,155 @@
-# UFC Fight Predictor
+# UFC Fight Predictor (UFCML)
 
-End-to-end UFC prediction system:
-- Scrapes UFCStats into canonical Postgres tables (schema `ufc`)
-- Materializes stable contract tables for ML (schema `contract`)
-- Scrapes upcoming events/cards (schema `app`)
-- Trains a pre-fight model from Postgres (`UFC_prefight_pro.py`)
-- Stores predictions for upcoming fights in Postgres (`app.predictions`)
+End-to-end UFC prediction platform:
+- Scrapes UFCStats into canonical Postgres tables (`ufc.*`).
+- Materializes strict legacy-compatible contract tables for ML (`contract.*`) with exact column names/types.
+- Scrapes upcoming events/cards into website-facing tables (`app.*`).
+- Trains a pre-fight model from Postgres (`UFC_prefight_pro.py`) and stores model metadata + predictions in DB.
+- Serves predictions via a FastAPI API (`src/ufc_api/main.py`) and a Next.js frontend (`frontend/`).
 
-## Quickstart (Postgres)
+## Architecture At A Glance
 
-1. Install dependencies:
+Schemas:
+- `ufc.*`: canonical scraped truth (events, fights, fight_totals, fighters).
+- `contract.*`: stable ML interface matching the legacy CSV schema exactly.
+- `app.*`: website state (upcoming fights, model artifacts, stored predictions).
+
+Data flow (weekly):
+1. Scrape completed events → ingest events/fights/totals into `ufc.*`.
+2. Enrich fighter bios into `ufc.fighters` (only when missing).
+3. Refresh `contract.*` from `ufc.*`.
+4. Refresh `app.upcoming_fights` from UFCStats upcoming events.
+5. Train + save model bundle → record metadata in `app.model_artifacts`.
+6. Generate + store predictions in `app.predictions` (upcoming + completed evaluation support).
+
+## UFCStats Fetch Rules (Important)
+
+All scraping must use UFCStats with these exact endpoints:
+- Completed events index: `http://ufcstats.com/statistics/events/completed?page=all`
+- Fighters index: `http://ufcstats.com/statistics/fighters`
+- Upcoming events index: `http://ufcstats.com/statistics/events/upcoming`
+
+Follow links to:
+- `http://ufcstats.com/event-details/<event_id>`
+- `http://ufcstats.com/fight-details/<fight_id>`
+- `http://ufcstats.com/fighter-details/<fighter_id>`
+
+Rules:
+- Always normalize discovered URLs to `http://ufcstats.com` + path.
+- No `https` and no `www`.
+
+## Local Setup
+
+Requirements:
+- Python 3.12+ (GitHub Actions uses 3.12).
+- A Postgres database (Supabase recommended).
+- Node 18+ (frontend).
+
+Install Python dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Set `DATABASE_URL` in `.env` (Supabase recommended).
+Create `.env` with at least:
+- `DATABASE_URL` (SQLAlchemy URL). Example:
 
-3. Initialize schemas/tables:
+```text
+DATABASE_URL=postgresql+psycopg2://USER:PASSWORD@HOST:5432/postgres?sslmode=require
+```
+
+Optional runtime settings:
+- `USER_AGENT=UFC-FightPredictor-Bot/1.0 (+https://github.com/<you>/<repo>)`
+- `RATE_LIMIT_SECONDS=0.8`
+- `UFC_DEBUG_HTML=1` (save debug HTML for suspicious fight pages)
+
+## Database Init + Contract Validation
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m ufc_ingest.cli validate-contract
 ```
 
-4. Backfill (incremental in batches):
+## Ingest (Completed Events)
+
+Incremental ingest (new events + recovery refresh for partial events):
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m ufc_ingest.cli ingest --mode incremental --limit 1
+```
+
+Bootstrap ingest (all events):
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m ufc_ingest.cli ingest --mode bootstrap --limit 5
+```
+
+Backfill safely in batches (recommended for a full historical load):
 
 ```powershell
 $env:PYTHONPATH = "src"
 python scripts/backfill_all.py
 ```
 
-5. Run the weekly pipeline (incremental ingest + refresh contract + refresh upcoming fights + train + store predictions):
+## Refresh Contract Tables
 
 ```powershell
-python scripts/weekly_pipeline.py
+$env:PYTHONPATH = "src"
+python -m ufc_ingest.cli refresh-contract
 ```
 
-## Weekly Automation (GitHub Actions)
+## Train Model (From Postgres)
 
-Workflow:
-- `.github/workflows/weekly_pipeline.yml`
+By default, `UFC_prefight_pro.py` reads from `contract.*`, builds pre-fight features chronologically (no leakage), trains + calibrates, and writes a joblib model bundle.
 
-What it runs:
-- incremental ingest
-- contract refresh
-- upcoming fights refresh
-- model retrain (`UFC_TRAIN_ALL=1`)
-- upcoming prediction storage
-- post-run DB verification (`scripts/verify_weekly_state.py`)
+Example:
 
-Trigger:
-- scheduled weekly (Monday, 09:00 UTC)
-- manual run (`workflow_dispatch`) with optional `mode` and `limit`
+```powershell
+python UFC_prefight_pro.py
+```
 
-Required GitHub secret:
-- `DATABASE_URL`
+Useful env vars:
+- `UFC_TRAIN_ALL=1` (train on all data; no holdout evaluation)
+- `UFC_MODEL_PATH=models/ufc_model_bundle_prefight_pro_<version>.joblib`
+- `UFC_SAVE_MODEL_META=1` (write `app.model_artifacts`)
+- `UFC_PREDICT_UPCOMING=1` (store upcoming predictions into `app.predictions`)
 
-Optional auto-deploy after weekly run:
-- set repository variable `WEEKLY_DEPLOY_API=1`
-- requires the same GCP deploy secrets/vars used by `.github/workflows/deploy_gcp_cloud_run.yml`
-- uses the newly trained weekly model bundle in the API image
+## Weekly Pipeline (Local)
 
-Workflow artifacts:
-- `weekly_pipeline.log`
-- `weekly_verify.log`
-- `tmp/*.html` (debug HTML, when present)
+Runs: ingest → refresh contract → refresh upcoming → train → store predictions.
+
+```powershell
+python scripts/weekly_pipeline.py --mode incremental
+```
 
 ## API (FastAPI)
 
-Start the API locally:
+Run locally:
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m uvicorn ufc_api.main:app --host 0.0.0.0 --port 8000
 ```
 
-Endpoints:
+Key endpoints:
 - `GET /health`
 - `GET /models/latest`
 - `GET /upcoming`
 - `GET /upcoming/predictions`
-- `POST /predict`
-- `GET /fighters/search`
 - `GET /completed/predictions`
+- `GET /matchups/quick`
+- `GET /fighters/search?q=...`
+- `POST /predict` (custom matchup)
 
-## Deploy API (Google Cloud Run)
+## Frontend (Next.js)
 
-Preferred free/low-cost production path:
-- Build image from this repo (`Dockerfile`)
-- Push to Artifact Registry
-- Deploy to Cloud Run with `min-instances=0`
-
-Detailed guide:
-- `deploy/gcp_cloud_run.md`
-
-GitHub Actions deploy workflow:
-- `.github/workflows/deploy_gcp_cloud_run.yml`
-
-Required GitHub secrets:
-- `GCP_WORKLOAD_IDENTITY_PROVIDER`
-- `GCP_SERVICE_ACCOUNT`
-- `DATABASE_URL`
-- `CORS_ORIGINS` (optional)
-
-Required GitHub variables:
-- `GCP_PROJECT_ID`
-- `GCP_REGION`
-- `ARTIFACT_REPO`
-- `CLOUD_RUN_SERVICE`
-
-## Notes
-
-- Canonical tables live under `ufc.*`.
-- Contract tables live under `contract.*` and match the legacy CSV schema exactly.
-- Website-facing state lives under `app.*` (`upcoming_fights`, `predictions`, `model_artifacts`).
-- UFCStats requests must use `http://ufcstats.com` (no https/www).
-
-## Frontend (Minimal Test UI)
-
-Next.js frontend is in `frontend/` with pages:
-- `/` upcoming predictions
-- `/results` completed fight prediction results
-- `/predict` custom fighter-vs-fighter prediction
+Pages:
+- `/` home (feature hub)
+- `/predict` custom matchup + quick matchups
+- `/upcoming` upcoming fight predictions
+- `/results` completed fights with prediction accuracy
 
 Run locally:
 
@@ -133,5 +160,64 @@ npm install
 npm run dev
 ```
 
-Then open:
-- `http://localhost:3000`
+Set `NEXT_PUBLIC_API_BASE_URL` to your API (Cloud Run or local).
+
+## Weekly Automation (GitHub Actions)
+
+Workflow:
+- `.github/workflows/weekly_pipeline.yml`
+
+Triggers:
+- scheduled weekly: Monday `09:00 UTC`
+- manual runs via `workflow_dispatch` (optional `mode` and `limit`)
+
+What it does:
+- incremental ingest (including recovery refresh for partial events)
+- refresh `contract.*`
+- refresh `app.upcoming_fights`
+- train model (`UFC_TRAIN_ALL=1`)
+- store model metadata + upcoming predictions
+- post-run verification (`scripts/verify_weekly_state.py`)
+- uploads artifacts (logs, model bundle, debug HTML)
+
+Required GitHub secret:
+- `DATABASE_URL`
+
+Optional: auto-deploy API after weekly training (recommended)
+- Set repo variable `WEEKLY_DEPLOY_API=1`
+- Configure the GCP deploy secrets/vars (see next section)
+
+## Deploy API (Google Cloud Run)
+
+Deployment is Docker-based using `Dockerfile` and Artifact Registry.
+
+Docs:
+- `deploy/gcp_cloud_run.md`
+
+Manual GitHub Actions deploy workflow:
+- `.github/workflows/deploy_gcp_cloud_run.yml`
+
+Required GitHub secrets:
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_SERVICE_ACCOUNT`
+- `DATABASE_URL`
+- `CORS_ORIGINS` (e.g. `https://<your-vercel-domain>`; no trailing slash)
+- `CORS_ORIGIN_REGEX` (optional; for preview domains like `https://.*[.]vercel[.]app`)
+
+Required GitHub variables:
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `ARTIFACT_REPO`
+- `CLOUD_RUN_SERVICE`
+
+## Troubleshooting
+
+- **Frontend shows “Failed to fetch”**:
+  - Check API CORS env vars. `CORS_ORIGINS` must match the browser Origin exactly (no trailing `/`).
+  - If using Vercel previews, set `CORS_ORIGIN_REGEX=https://.*[.]vercel[.]app`.
+
+- **Latest completed event looks stale**:
+  - Earlier partial ingests can leave an event in `ufc.events` with `0` fights. Incremental ingest now detects and refreshes those events automatically.
+
+- **Debug HTML**:
+  - Set `UFC_DEBUG_HTML=1` to save suspicious fight pages into `tmp/` for markup drift diagnosis.
