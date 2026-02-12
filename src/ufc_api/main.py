@@ -215,10 +215,12 @@ def on_startup():
 # CORS: configure via CORS_ORIGINS="https://your-frontend.com,http://localhost:3000"
 origins_env = os.getenv("CORS_ORIGINS", "")
 origins = [o.strip() for o in origins_env.split(",") if o.strip()]
-if origins:
+origin_regex = os.getenv("CORS_ORIGIN_REGEX", "").strip() or None
+if origins or origin_regex:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=origins if origins else [],
+        allow_origin_regex=origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
