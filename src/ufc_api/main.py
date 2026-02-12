@@ -213,8 +213,13 @@ def on_startup():
         logger.warning("Startup schema check skipped due unexpected error: %s", exc)
 
 # CORS: configure via CORS_ORIGINS="https://your-frontend.com,http://localhost:3000"
+def _normalize_cors_origin(origin: str) -> str:
+    # Browsers send Origin without a trailing slash. Normalize env values to match.
+    return origin.strip().rstrip("/")
+
+
 origins_env = os.getenv("CORS_ORIGINS", "")
-origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+origins = [_normalize_cors_origin(o) for o in origins_env.split(",") if o.strip()]
 origin_regex = os.getenv("CORS_ORIGIN_REGEX", "").strip() or None
 if origins or origin_regex:
     app.add_middleware(

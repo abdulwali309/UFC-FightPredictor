@@ -48,6 +48,11 @@ jobs:
       - name: Deploy Cloud Run service
         run: |
           IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:latest"
+          cat > .cloudrun-env.yaml <<EOF
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          CORS_ORIGINS: "${{ secrets.CORS_ORIGINS }}"
+          CORS_ORIGIN_REGEX: "${{ secrets.CORS_ORIGIN_REGEX }}"
+          EOF
           gcloud run deploy "${CLOUD_RUN_SERVICE}" \
             --image "${IMAGE_URI}" \
             --platform managed \
@@ -58,4 +63,4 @@ jobs:
             --max-instances 3 \
             --cpu 1 \
             --memory 1Gi \
-            --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }},CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
+            --env-vars-file .cloudrun-env.yaml
