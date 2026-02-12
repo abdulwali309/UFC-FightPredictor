@@ -1,9 +1,11 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
@@ -30,7 +32,7 @@ def main():
     refresh_upcoming_fights(limit_events=None)
 
     os.makedirs(args.model_dir, exist_ok=True)
-    model_version = args.model_version or f"prefight_pro_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    model_version = args.model_version or f"prefight_pro_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     model_path = os.path.join(args.model_dir, f"ufc_model_bundle_prefight_pro_{model_version}.joblib")
 
     # Train + persist model + store upcoming predictions
