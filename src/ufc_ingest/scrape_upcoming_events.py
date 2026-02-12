@@ -88,7 +88,7 @@ def scrape_upcoming_event_fights(event_url: str, session: RateLimitedSession = N
     soup = BeautifulSoup(r.text, "lxml")
     rows = soup.select(".b-fight-details__table tbody tr")
     fights: List[Dict] = []
-    for tr in rows:
+    for idx, tr in enumerate(rows, start=1):
         fighter_links = tr.select('a[href*="/fighter-details/"]')
         if len(fighter_links) < 2:
             continue
@@ -100,6 +100,8 @@ def scrape_upcoming_event_fights(event_url: str, session: RateLimitedSession = N
             "fighter_1_id": extract_ufcstats_id(normalize_ufcstats_url(f1.get("href")), "fighter-details"),
             "fighter_2_id": extract_ufcstats_id(normalize_ufcstats_url(f2.get("href")), "fighter-details"),
             "weight_class": _extract_weight_class(tr),
+            # UFCStats upcoming event tables are ordered top->bottom by card order.
+            "card_order": idx,
         })
 
     # de-duplicate

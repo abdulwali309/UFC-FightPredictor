@@ -70,6 +70,7 @@ class Fight(Base):
     referee = Column(Text)
     method_details = Column(Text)
     winner_corner = Column(String)  # 'red'/'blue'/'draw'/'nc'
+    fight_order = Column(Integer, nullable=True)
     url = Column(Text)
     scraped_at = Column(DateTime, default=datetime.utcnow)
 
@@ -143,6 +144,7 @@ class UpcomingFight(Base):
     fighter_1 = Column(Text, nullable=False)
     fighter_2 = Column(Text, nullable=False)
     weight_class = Column(Text, nullable=True)
+    card_order = Column(Integer, nullable=True)
     scheduled_date = Column(Date, nullable=True)
     event_name = Column(Text, nullable=True)
     source = Column(Text, nullable=True)

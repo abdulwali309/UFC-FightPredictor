@@ -11,6 +11,7 @@ from .db import get_engine, get_session
 from .models import Event, Fighter, Fight, FightTotal, PipelineState
 from .refresh_contract import refresh_all
 from .export_csv import export_all
+from .backfill_fight_order import backfill_fight_order
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import text
@@ -66,8 +67,8 @@ def ingest(mode: str = 'incremental', limit: Optional[int] = None):
                                 {'fid': finfo.get('fighter_id'), 'fn': finfo.get('name'), 'url': finfo.get('url')}
                             )
                     # upsert fight
-                    conn.execute(text("INSERT INTO ufc.fights (fight_id, event_id, red_fighter_id, blue_fighter_id, weight_class, method, round, fight_time, time_format, referee, method_details, winner_corner, url, scraped_at) VALUES (:fid, :eid, :rid, :bid, :wc, :method, :round, :ftime, :tformat, :ref, :md, :winner, :url, now()) ON CONFLICT (fight_id) DO UPDATE SET weight_class=EXCLUDED.weight_class, method=EXCLUDED.method, round=EXCLUDED.round, fight_time=EXCLUDED.fight_time, time_format=EXCLUDED.time_format, referee=EXCLUDED.referee, method_details=EXCLUDED.method_details, winner_corner=EXCLUDED.winner_corner"), {
-                        'fid': fight_id, 'eid': ev['event_id'], 'rid': parsed['red'].get('fighter_id'), 'bid': parsed['blue'].get('fighter_id'), 'wc': parsed['fight_meta'].get('weight_class'), 'method': parsed['fight_meta'].get('method'), 'round': parsed['fight_meta'].get('round'), 'ftime': parsed['fight_meta'].get('fight_time'), 'tformat': parsed['fight_meta'].get('time_format'), 'ref': parsed['fight_meta'].get('referee'), 'md': parsed['fight_meta'].get('method_details'), 'winner': parsed['fight_meta'].get('winner_corner'), 'url': fight_url
+                    conn.execute(text("INSERT INTO ufc.fights (fight_id, event_id, red_fighter_id, blue_fighter_id, weight_class, method, round, fight_time, time_format, referee, method_details, winner_corner, fight_order, url, scraped_at) VALUES (:fid, :eid, :rid, :bid, :wc, :method, :round, :ftime, :tformat, :ref, :md, :winner, :forder, :url, now()) ON CONFLICT (fight_id) DO UPDATE SET weight_class=EXCLUDED.weight_class, method=EXCLUDED.method, round=EXCLUDED.round, fight_time=EXCLUDED.fight_time, time_format=EXCLUDED.time_format, referee=EXCLUDED.referee, method_details=EXCLUDED.method_details, winner_corner=EXCLUDED.winner_corner, fight_order=COALESCE(EXCLUDED.fight_order, ufc.fights.fight_order)"), {
+                        'fid': fight_id, 'eid': ev['event_id'], 'rid': parsed['red'].get('fighter_id'), 'bid': parsed['blue'].get('fighter_id'), 'wc': parsed['fight_meta'].get('weight_class'), 'method': parsed['fight_meta'].get('method'), 'round': parsed['fight_meta'].get('round'), 'ftime': parsed['fight_meta'].get('fight_time'), 'tformat': parsed['fight_meta'].get('time_format'), 'ref': parsed['fight_meta'].get('referee'), 'md': parsed['fight_meta'].get('method_details'), 'winner': parsed['fight_meta'].get('winner_corner'), 'forder': fmeta.get('fight_order'), 'url': fight_url
                     })
                     # upsert fight_totals for each corner
                     for corner in ['red', 'blue']:
@@ -131,6 +132,9 @@ def cli():
     p_runall.add_argument('--mode', choices=['bootstrap', 'incremental'], default='incremental')
     p_runall.add_argument('--limit', type=int, default=None, help='Optional limit number of events to ingest (for testing)')
     p_runall.add_argument('--train-cmd', default=None, help='Optional command to invoke training script after refresh')
+
+    p_backfill_order = sub.add_parser('backfill-fight-order')
+    p_backfill_order.add_argument('--limit-events', type=int, default=None, help='Optional limit of events to process')
     args = parser.parse_args()
 
     if args.command == 'ingest':
@@ -160,6 +164,9 @@ def cli():
             logger.info('Running training command: %s', args.train_cmd)
             subprocess.run(args.train_cmd, shell=True, check=False)
         print('Done run-all')
+    elif args.command == 'backfill-fight-order':
+        events_done, fights_done = backfill_fight_order(limit_events=getattr(args, 'limit_events', None))
+        print(f'Backfill done: events={events_done} fights_updated={fights_done}')
     else:
         parser.print_help()
 

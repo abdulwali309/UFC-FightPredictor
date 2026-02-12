@@ -35,4 +35,7 @@ def scrape_event_fights(event_url: str, session: RateLimitedSession = None):
             continue
         seen.add(f['fight_id'])
         result.append(f)
+    # Normalize to contiguous 1..N card order for reliable display ordering.
+    for idx, f in enumerate(result, start=1):
+        f['fight_order'] = idx
     return result

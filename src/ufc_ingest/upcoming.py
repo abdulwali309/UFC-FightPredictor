@@ -92,15 +92,16 @@ def refresh_upcoming_fights(limit_events: Optional[int] = None, session: RateLim
                 conn.execute(text(
                     """
                     INSERT INTO app.upcoming_fights
-                        (fight_key, event_id, fighter_1_id, fighter_2_id, fighter_1, fighter_2, weight_class, scheduled_date, event_name, source, is_active, created_at)
+                        (fight_key, event_id, fighter_1_id, fighter_2_id, fighter_1, fighter_2, weight_class, card_order, scheduled_date, event_name, source, is_active, created_at)
                     VALUES
-                        (:fight_key, :event_id, :fighter_1_id, :fighter_2_id, :fighter_1, :fighter_2, :weight_class, :scheduled_date, :event_name, :source, true, now())
+                        (:fight_key, :event_id, :fighter_1_id, :fighter_2_id, :fighter_1, :fighter_2, :weight_class, :card_order, :scheduled_date, :event_name, :source, true, now())
                     ON CONFLICT (fight_key)
                     DO UPDATE SET
                         event_id = EXCLUDED.event_id,
                         fighter_1_id = EXCLUDED.fighter_1_id,
                         fighter_2_id = EXCLUDED.fighter_2_id,
                         weight_class = EXCLUDED.weight_class,
+                        card_order = EXCLUDED.card_order,
                         scheduled_date = EXCLUDED.scheduled_date,
                         event_name = EXCLUDED.event_name,
                         source = EXCLUDED.source,
@@ -115,6 +116,7 @@ def refresh_upcoming_fights(limit_events: Optional[int] = None, session: RateLim
                     "fighter_1": f["fighter_1"],
                     "fighter_2": f["fighter_2"],
                     "weight_class": f.get("weight_class"),
+                    "card_order": f.get("card_order"),
                     "scheduled_date": scheduled_date,
                     "event_name": ev.get("name"),
                     "source": "ufcstats_upcoming",

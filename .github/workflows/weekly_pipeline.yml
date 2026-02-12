@@ -1,0 +1,168 @@
+name: Weekly UFC Pipeline
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Ingest mode"
+        required: false
+        default: "incremental"
+        type: choice
+        options:
+          - incremental
+          - bootstrap
+      limit:
+        description: "Optional ingest event limit (blank for no limit)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: weekly-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run-weekly-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run weekly pipeline
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          USER_AGENT: UFC-FightPredictor-Bot/1.0 (+https://github.com/${{ github.repository }})
+          RATE_LIMIT_SECONDS: "0.8"
+          UFC_DEBUG_HTML: "1"
+        run: |
+          set -euo pipefail
+          MODE="${{ github.event.inputs.mode }}"
+          LIMIT="${{ github.event.inputs.limit }}"
+          if [[ -z "${MODE}" ]]; then
+            MODE="incremental"
+          fi
+
+          CMD=(python scripts/weekly_pipeline.py --mode "${MODE}")
+          if [[ -n "${LIMIT}" ]]; then
+            CMD+=(--limit "${LIMIT}")
+          fi
+
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}" | tee weekly_pipeline.log
+
+      - name: Verify weekly state
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python scripts/verify_weekly_state.py | tee weekly_verify.log
+
+      - name: Upload pipeline artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-pipeline-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            weekly_pipeline.log
+            weekly_verify.log
+            models/ufc_model_bundle_prefight_pro_*.joblib
+            tmp/*.html
+
+  deploy-api-with-latest-model:
+    if: ${{ vars.WEEKLY_DEPLOY_API == '1' }}
+    needs: run-weekly-pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      ARTIFACT_REPO: ${{ vars.ARTIFACT_REPO }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      IMAGE_NAME: ufc-api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download weekly artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-pipeline-${{ github.run_id }}
+          path: weekly_artifacts
+
+      - name: Use latest trained model for image build
+        run: |
+          set -euo pipefail
+          LATEST_MODEL="$(ls -t weekly_artifacts/models/ufc_model_bundle_prefight_pro_*.joblib | head -n 1)"
+          if [[ -z "${LATEST_MODEL}" ]]; then
+            echo "No trained model bundle found in weekly artifacts"
+            exit 1
+          fi
+          cp "${LATEST_MODEL}" ufc_model_bundle_prefight_pro.joblib
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}"
+          docker build -t "${IMAGE_URI}:${IMAGE_SHA}" .
+          docker tag "${IMAGE_URI}:${IMAGE_SHA}" "${IMAGE_URI}:latest"
+          docker push "${IMAGE_URI}:${IMAGE_SHA}"
+          docker push "${IMAGE_URI}:latest"
+
+      - name: Deploy Cloud Run service
+        run: |
+          IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:latest"
+          gcloud run deploy "${CLOUD_RUN_SERVICE}" \
+            --image "${IMAGE_URI}" \
+            --platform managed \
+            --region "${GCP_REGION}" \
+            --allow-unauthenticated \
+            --port 8000 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --cpu 1 \
+            --memory 1Gi \
+            --set-env-vars "DATABASE_URL=${{ secrets.DATABASE_URL }},CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
+
+      - name: Upload deploy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-deploy-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            weekly_artifacts/*.log
+            tmp/*.html

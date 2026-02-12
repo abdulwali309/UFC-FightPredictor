@@ -18,6 +18,11 @@ def ensure_schemas_and_tables():
     # Create tables from models
     Base.metadata.create_all(bind=engine)
 
+    # Non-breaking app schema evolutions for existing deployments.
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE app.upcoming_fights ADD COLUMN IF NOT EXISTS card_order integer"))
+        conn.execute(text("ALTER TABLE ufc.fights ADD COLUMN IF NOT EXISTS fight_order integer"))
+
     # Create contract tables if not exist with exact column names (SQL to ensure quotation and types)
     with engine.begin() as conn:
         conn.execute(text(

@@ -37,6 +37,36 @@ python scripts/backfill_all.py
 python scripts/weekly_pipeline.py
 ```
 
+## Weekly Automation (GitHub Actions)
+
+Workflow:
+- `.github/workflows/weekly_pipeline.yml`
+
+What it runs:
+- incremental ingest
+- contract refresh
+- upcoming fights refresh
+- model retrain (`UFC_TRAIN_ALL=1`)
+- upcoming prediction storage
+- post-run DB verification (`scripts/verify_weekly_state.py`)
+
+Trigger:
+- scheduled weekly (Monday, 09:00 UTC)
+- manual run (`workflow_dispatch`) with optional `mode` and `limit`
+
+Required GitHub secret:
+- `DATABASE_URL`
+
+Optional auto-deploy after weekly run:
+- set repository variable `WEEKLY_DEPLOY_API=1`
+- requires the same GCP deploy secrets/vars used by `.github/workflows/deploy_gcp_cloud_run.yml`
+- uses the newly trained weekly model bundle in the API image
+
+Workflow artifacts:
+- `weekly_pipeline.log`
+- `weekly_verify.log`
+- `tmp/*.html` (debug HTML, when present)
+
 ## API (FastAPI)
 
 Start the API locally:
@@ -86,3 +116,22 @@ Required GitHub variables:
 - Contract tables live under `contract.*` and match the legacy CSV schema exactly.
 - Website-facing state lives under `app.*` (`upcoming_fights`, `predictions`, `model_artifacts`).
 - UFCStats requests must use `http://ufcstats.com` (no https/www).
+
+## Frontend (Minimal Test UI)
+
+Next.js frontend is in `frontend/` with pages:
+- `/` upcoming predictions
+- `/results` completed fight prediction results
+- `/predict` custom fighter-vs-fighter prediction
+
+Run locally:
+
+```powershell
+cd frontend
+copy .env.local.example .env.local
+npm install
+npm run dev
+```
+
+Then open:
+- `http://localhost:3000`
