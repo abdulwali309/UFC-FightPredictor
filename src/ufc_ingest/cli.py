@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+def _load_existing_event_state(engine):
+    """Return existing event IDs and events that need a refresh (currently 0 fights)."""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            """
+            SELECT e.event_id, COUNT(f.fight_id) AS fight_count
+            FROM ufc.events e
+            LEFT JOIN ufc.fights f ON f.event_id = e.event_id
+            GROUP BY e.event_id
+            """
+        )).fetchall()
+
+    existing_event_ids = {r[0] for r in rows}
+    refresh_event_ids = {r[0] for r in rows if int(r[1] or 0) == 0}
+    return existing_event_ids, refresh_event_ids
+
+
 def ingest(mode: str = 'incremental', limit: Optional[int] = None):
     session_http = RateLimitedSession()
     engine = get_engine()
@@ -27,17 +44,40 @@ def ingest(mode: str = 'incremental', limit: Optional[int] = None):
 
     ensure_schemas_and_tables()
 
-    with engine.connect() as conn:
-        rows = conn.execute(text("SELECT event_id FROM ufc.events")).fetchall()
-    existing_event_ids = set([r[0] for r in rows])
-
+    existing_event_ids, refresh_event_ids = _load_existing_event_state(engine)
     events = list(scrape_events_index(session_http))
-    new_events = [e for e in events if e['event_id'] not in existing_event_ids] if mode == 'incremental' else events
+
+    if mode == 'incremental':
+        selected = []
+        new_count = 0
+        refresh_count = 0
+        seen = set()
+        for ev in events:
+            event_id = ev.get('event_id')
+            if not event_id or event_id in seen:
+                continue
+            if event_id not in existing_event_ids:
+                selected.append(ev)
+                seen.add(event_id)
+                new_count += 1
+            elif event_id in refresh_event_ids:
+                # Recover from earlier partial ingests where event row existed but fights did not.
+                selected.append(ev)
+                seen.add(event_id)
+                refresh_count += 1
+        new_events = selected
+    else:
+        new_events = events
+        new_count = len(new_events)
+        refresh_count = 0
 
     if limit:
         new_events = new_events[:limit]
 
-    logger.info('Found %d events total, %d new events to ingest', len(events), len(new_events))
+    logger.info(
+        'Found %d events total, %d to ingest (%d brand new, %d refresh-needed)',
+        len(events), len(new_events), new_count, refresh_count
+    )
 
     for ev in new_events:
         # transaction per event
