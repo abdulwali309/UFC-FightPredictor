@@ -1131,15 +1131,4 @@ th {
   td {
     font-size: 0.81rem;
   }
-
-  /* Mobile: allow tables to fit the viewport instead of forcing horizontal overflow. */
-  table {
-    min-width: 0;
-    table-layout: fixed;
-  }
-
-  th,
-  td {
-    overflow-wrap: anywhere;
-  }
 }
