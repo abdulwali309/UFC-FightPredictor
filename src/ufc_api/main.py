@@ -202,8 +202,11 @@ app = FastAPI(title="UFCML API", version="0.1.0")
 
 @app.on_event("startup")
 def on_startup():
-    # Best-effort schema checks. Do not fail API startup on DB lock/timeout.
-    if os.getenv("UFC_API_STARTUP_MIGRATE", "1") != "1":
+    # Never run DDL/migrations on API startup by default.
+    # Cloud Run startup probes expect the server to bind quickly; the weekly pipeline
+    # is responsible for keeping schemas/tables up to date.
+    if os.getenv("UFC_API_STARTUP_MIGRATE", "0") != "1":
+        logger.info("Startup schema check disabled (set UFC_API_STARTUP_MIGRATE=1 to enable).")
         return
     try:
         ensure_schemas_and_tables()
