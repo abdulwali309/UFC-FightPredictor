@@ -811,6 +811,7 @@ a {
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  min-width: 0; /* allow overflow scrolling inside grid/flex containers */
   max-width: 100%;
   overscroll-behavior-x: contain;
   border: 1px solid var(--line);
