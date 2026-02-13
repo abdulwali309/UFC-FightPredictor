@@ -810,6 +810,9 @@ a {
 
 .table-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
@@ -1127,5 +1130,16 @@ th {
   th,
   td {
     font-size: 0.81rem;
+  }
+
+  /* Mobile: allow tables to fit the viewport instead of forcing horizontal overflow. */
+  table {
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  th,
+  td {
+    overflow-wrap: anywhere;
   }
 }
