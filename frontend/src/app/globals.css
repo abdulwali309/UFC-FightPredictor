@@ -333,6 +333,8 @@ a {
 .stack {
   display: grid;
   gap: 0.92rem;
+  /* Prevent wide children (like tables) from expanding the single grid column. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .home-minimal {
@@ -790,6 +792,12 @@ a {
 .event-details {
   display: grid;
   gap: 0.66rem;
+  /* Same shrink-to-fit fix for the expanded event content. */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.event-details > * {
+  min-width: 0;
 }
 
 .event-summary {
@@ -811,7 +819,6 @@ a {
 
 .table-wrap {
   overflow-x: auto;
-  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   min-width: 0; /* allow overflow scrolling inside grid/flex containers */
   max-width: 100%;
