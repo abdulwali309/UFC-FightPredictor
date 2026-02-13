@@ -578,6 +578,7 @@ a {
   box-shadow: var(--shadow-lg);
   padding: 1rem;
   animation: riseIn 300ms ease both;
+  min-width: 0; /* allow inner overflow containers (tables) to scroll instead of expanding panels */
 }
 
 .panel h2 {
@@ -1028,7 +1029,8 @@ th {
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    /* Avoid leaving a transform on the element, which can break nested scrolling on iOS Safari. */
+    transform: none;
   }
 }
 
