@@ -730,7 +730,8 @@ def completed_predictions(
 ):
     engine = get_engine()
     with engine.connect() as conn:
-        mv = model_version or _latest_model_version(conn)
+        requested_mv = model_version
+        mv = requested_mv or _latest_model_version(conn)
         if not mv:
             raise HTTPException(status_code=404, detail="No model artifacts found")
 
@@ -875,7 +876,7 @@ def completed_predictions(
             LEFT JOIN LATERAL (
               SELECT p.*
               FROM app.predictions p
-              WHERE p.model_version = :model_version
+              WHERE (:requested_model_version IS NULL OR p.model_version = :requested_model_version)
                 AND p.event_id = f.event_id
                 AND (
                   (p.fighter_1_id IS NOT NULL AND p.fighter_2_id IS NOT NULL AND p.fighter_1_id = f.red_fighter_id AND p.fighter_2_id = f.blue_fighter_id)
@@ -885,6 +886,11 @@ def completed_predictions(
                   (p.fighter_1 = red.full_name AND p.fighter_2 = blue.full_name)
                   OR
                   (p.fighter_1 = blue.full_name AND p.fighter_2 = red.full_name)
+                )
+                AND (
+                  p.created_at IS NULL
+                  OR to_date(e.date, 'FMMonth DD, YYYY') IS NULL
+                  OR p.created_at <= (to_date(e.date, 'FMMonth DD, YYYY')::timestamp + INTERVAL '1 day')
                 )
               ORDER BY
                 CASE WHEN p.fighter_1_id IS NOT NULL AND p.fighter_2_id IS NOT NULL THEN 0 ELSE 1 END,
@@ -900,6 +906,6 @@ def completed_predictions(
               f.scraped_at DESC
             LIMIT :limit
             """
-        ), {"model_version": mv, "limit": limit}).mappings().fetchall()
+        ), {"requested_model_version": requested_mv, "limit": limit}).mappings().fetchall()
 
     return {"model_version": mv, "count": len(rows), "rows": _to_jsonable([dict(r) for r in rows])}
